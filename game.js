@@ -186,7 +186,7 @@ export class Game {
         this.gameOverScreen.classList.add('hidden');
         this.distanceTraveled = 0;
         this.clock = new THREE.Clock();
-        this.zoomDirection = null;
+        this.zoomTarget = null;
 
         // Start new recording
         if (this.replayRecorder) {
@@ -239,6 +239,7 @@ export class Game {
 
         // Camera follow logic
         let targetCamPos;
+        let targetLookAt;
         let posLerpFactor;
         let lookLerpFactor;
 
@@ -247,21 +248,42 @@ export class Game {
         const shouldZoomOut = this.explosionTriggered && timeSinceExplosion > 0.5;
 
         if (shouldZoomOut) {
-            // Zoom out to show the entire generated map
-            // Keep current angle: Project backwards along current view vector
-            if (!this.zoomDirection) {
-                this.zoomDirection = new THREE.Vector3().subVectors(this.camera.position, this.car.position).normalize();
+            // Calculate zoom target once
+            if (!this.zoomTarget) {
+                const bounds = this.trackManager.getTrackBounds();
+                if (bounds) {
+                    // Use direction from car to camera to preserve the current viewing angle relative to the action
+                    const viewDir = new THREE.Vector3().subVectors(this.camera.position, this.car.position).normalize();
+                    
+                    // Determine distance needed to see the whole map
+                    // Scale based on the largest dimension of the track
+                    const dist = Math.max(bounds.maxDim * 1.5, 600);
+                    
+                    this.zoomTarget = {
+                        pos: bounds.center.clone().add(viewDir.multiplyScalar(dist)),
+                        lookAt: bounds.center
+                    };
+                } else {
+                    // Fallback
+                    this.zoomTarget = {
+                        pos: this.car.position.clone().add(new THREE.Vector3(0, 500, 500)),
+                        lookAt: this.car.position
+                    };
+                }
             }
+
+            // Zoom out to show the entire generated map
+            targetCamPos = this.zoomTarget.pos;
+            targetLookAt = this.zoomTarget.lookAt;
             
-            // Distance 600 to see map
-            targetCamPos = this.car.position.clone().add(this.zoomDirection.clone().multiplyScalar(600));
             posLerpFactor = dt * 1.0; 
-            lookLerpFactor = dt * 0.5; 
+            lookLerpFactor = dt * 1.5; // Smooth pan to center
         } else {
             // Falling follow (or holding position while explosion plays)
             // Pull back further to show the fall and surroundings (asteroids)
             targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 60, 40));
-            
+            targetLookAt = this.car.position;
+
             if (this.explosionTriggered) {
                 // During explosion wait: stabilize camera slowly to observe effect
                 posLerpFactor = dt * 2.0;
@@ -274,7 +296,8 @@ export class Game {
 
         this.camera.position.lerp(targetCamPos, posLerpFactor);
         
-        this.cameraLookAt.lerp(this.car.position, lookLerpFactor);
+        // Use lerp for lookAt to allow panning to map center
+        this.cameraLookAt.lerp(targetLookAt, lookLerpFactor);
         this.camera.lookAt(this.cameraLookAt);
     }
 

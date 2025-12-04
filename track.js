@@ -419,4 +419,26 @@ export class TrackManager {
         }
         return { post: nearest, distance: minDist };
     }
+
+    getTrackBounds() {
+        if (this.segments.length === 0) return null;
+        
+        let minX = Infinity, maxX = -Infinity;
+        let minZ = Infinity, maxZ = -Infinity;
+        
+        // Iterate all segments to find the full map extent
+        for(const seg of this.segments) {
+            const x = seg.mesh.position.x;
+            const z = seg.mesh.position.z;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (z < minZ) minZ = z;
+            if (z > maxZ) maxZ = z;
+        }
+        
+        const center = new THREE.Vector3((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
+        const maxDim = Math.max(maxX - minX, maxZ - minZ);
+        
+        return { center, maxDim };
+    }
 }

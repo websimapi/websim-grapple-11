@@ -191,6 +191,7 @@ export class Game {
         this.distanceTraveled = 0;
         this.clock = new THREE.Clock();
         this.zoomTarget = null;
+        this.zoomTransition = null;
 
         // Start new recording
         if (this.replayRecorder) {
@@ -242,14 +243,10 @@ export class Game {
         }
 
         // Camera follow logic
-        let targetCamPos;
-        let targetLookAt;
-        let posLerpFactor;
-        let lookLerpFactor;
-
-        // Wait 0.5 seconds before zooming out
         const timeSinceExplosion = this.explosionTriggered ? (this.clock.getElapsedTime() - this.explosionTime) : 0;
-        const shouldZoomOut = this.explosionTriggered && timeSinceExplosion > 0.5;
+        
+        // Wait 1.0 second before zooming out
+        const shouldZoomOut = this.explosionTriggered && timeSinceExplosion > 1.0;
 
         if (shouldZoomOut) {
             // Fade out fog for better visibility during zoom out
@@ -257,57 +254,75 @@ export class Game {
                 this.scene.fog.density = THREE.MathUtils.lerp(this.scene.fog.density, 0.0, dt * 2.0);
             }
 
-            // Calculate zoom target once
-            if (!this.zoomTarget) {
+            // Initialize smooth zoom transition
+            if (!this.zoomTransition) {
                 const bounds = this.trackManager.getTrackBounds();
+                let targetPos, targetLookAt;
+
                 if (bounds) {
-                    // Use direction from car to camera to preserve the current viewing angle relative to the action
-                    const viewDir = new THREE.Vector3().subVectors(this.camera.position, this.car.position).normalize();
+                    // Calculate view direction but enforce a high angle for better map visibility
+                    let viewDir = new THREE.Vector3().subVectors(this.camera.position, this.car.position).normalize();
+                    // Ensure we are looking down from above (bird's eye view bias)
+                    if (viewDir.y < 0.6) {
+                        viewDir.y = 0.6;
+                        viewDir.normalize();
+                    }
                     
                     // Determine distance needed to see the whole map
-                    // Scale based on the largest dimension of the track
-                    const dist = Math.max(bounds.maxDim * 1.5, 600);
+                    // Increased multiplier for safety on large maps
+                    const dist = Math.max(bounds.maxDim * 2.5, 1000);
                     
-                    this.zoomTarget = {
-                        pos: bounds.center.clone().add(viewDir.multiplyScalar(dist)),
-                        lookAt: bounds.center
-                    };
+                    targetPos = bounds.center.clone().add(viewDir.multiplyScalar(dist));
+                    targetLookAt = bounds.center;
                 } else {
                     // Fallback
-                    this.zoomTarget = {
-                        pos: this.car.position.clone().add(new THREE.Vector3(0, 500, 500)),
-                        lookAt: this.car.position
-                    };
+                    targetPos = this.car.position.clone().add(new THREE.Vector3(0, 600, 600));
+                    targetLookAt = this.car.position;
                 }
+
+                this.zoomTransition = {
+                    startPos: this.camera.position.clone(),
+                    startLookAt: this.cameraLookAt.clone(),
+                    targetPos: targetPos,
+                    targetLookAt: targetLookAt,
+                    startTime: this.clock.getElapsedTime(),
+                    duration: 4.0 // 4 seconds for a fluid cinematic movement
+                };
             }
 
-            // Zoom out to show the entire generated map
-            targetCamPos = this.zoomTarget.pos;
-            targetLookAt = this.zoomTarget.lookAt;
+            // Perform Interpolation
+            const now = this.clock.getElapsedTime();
+            const elapsed = now - this.zoomTransition.startTime;
+            const progress = Math.min(elapsed / this.zoomTransition.duration, 1.0);
             
-            posLerpFactor = dt * 1.0; 
-            lookLerpFactor = dt * 1.5; // Smooth pan to center
+            // Smootherstep for "start slow, accelerate, decelerate"
+            const t = THREE.MathUtils.smootherstep(progress, 0, 1);
+
+            this.camera.position.lerpVectors(this.zoomTransition.startPos, this.zoomTransition.targetPos, t);
+            this.cameraLookAt.lerpVectors(this.zoomTransition.startLookAt, this.zoomTransition.targetLookAt, t);
+            this.camera.lookAt(this.cameraLookAt);
+
         } else {
-            // Falling follow (or holding position while explosion plays)
-            // Pull back further to show the fall and surroundings (asteroids)
-            targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 60, 40));
-            targetLookAt = this.car.position;
+            // Pre-zoom behavior (falling or waiting)
+            const targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 60, 40));
+            const targetLookAt = this.car.position;
+
+            let posLerpFactor, lookLerpFactor;
 
             if (this.explosionTriggered) {
-                // During explosion wait: stabilize camera slowly to observe effect
-                posLerpFactor = dt * 2.0;
+                // During wait: stabilize camera slowly
+                posLerpFactor = dt * 0.5;
+                lookLerpFactor = dt * 2.0;
             } else {
                 // Falling: move fast
                 posLerpFactor = dt * 3.0;
+                lookLerpFactor = dt * 5.0;
             }
-            lookLerpFactor = dt * 5.0;
-        }
 
-        this.camera.position.lerp(targetCamPos, posLerpFactor);
-        
-        // Use lerp for lookAt to allow panning to map center
-        this.cameraLookAt.lerp(targetLookAt, lookLerpFactor);
-        this.camera.lookAt(this.cameraLookAt);
+            this.camera.position.lerp(targetCamPos, posLerpFactor);
+            this.cameraLookAt.lerp(targetLookAt, lookLerpFactor);
+            this.camera.lookAt(this.cameraLookAt);
+        }
     }
 
     triggerExplosion() {

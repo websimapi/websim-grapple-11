@@ -186,6 +186,7 @@ export class Game {
         this.gameOverScreen.classList.add('hidden');
         this.distanceTraveled = 0;
         this.clock = new THREE.Clock();
+        this.zoomDirection = null;
 
         // Start new recording
         if (this.replayRecorder) {
@@ -241,16 +242,21 @@ export class Game {
         let posLerpFactor;
         let lookLerpFactor;
 
-        // Wait 2 seconds before zooming out
+        // Wait 0.5 seconds before zooming out
         const timeSinceExplosion = this.explosionTriggered ? (this.clock.getElapsedTime() - this.explosionTime) : 0;
-        const shouldZoomOut = this.explosionTriggered && timeSinceExplosion > 2.0;
+        const shouldZoomOut = this.explosionTriggered && timeSinceExplosion > 0.5;
 
         if (shouldZoomOut) {
             // Zoom out to show the entire generated map
-            // Position high above and behind the crash site
-            targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 500, -300));
-            posLerpFactor = dt * 0.6; // Very smooth, slow cinematic pull back
-            lookLerpFactor = dt * 1.0; 
+            // Keep current angle: Project backwards along current view vector
+            if (!this.zoomDirection) {
+                this.zoomDirection = new THREE.Vector3().subVectors(this.camera.position, this.car.position).normalize();
+            }
+            
+            // Distance 600 to see map
+            targetCamPos = this.car.position.clone().add(this.zoomDirection.clone().multiplyScalar(600));
+            posLerpFactor = dt * 1.0; 
+            lookLerpFactor = dt * 0.5; 
         } else {
             // Falling follow (or holding position while explosion plays)
             // Pull back further to show the fall and surroundings (asteroids)
@@ -294,7 +300,7 @@ export class Game {
         setTimeout(() => {
             this.showGameOverScreen();
             // Keep isCrashing true so camera animation (zoom out) continues behind the UI
-        }, 2500);
+        }, 5500);
     }
 
     async showGameOverScreen() {

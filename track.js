@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { isPointOnOBB } from './utils.js';
+import { TrackFactory } from './track_factory.js';
+import { TrackGenerator } from './track_generator.js';
 
 export class TrackManager {
     constructor(scene) {
@@ -8,35 +10,9 @@ export class TrackManager {
         this.posts = [];
         this.width = 12; 
 
-        // Texture Loading
-        const loader = new THREE.TextureLoader();
-        this.roadTexture = loader.load('./asphalt_tile.png');
-        this.roadTexture.wrapS = THREE.RepeatWrapping;
-        this.roadTexture.wrapT = THREE.RepeatWrapping;
-        this.roadTexture.repeat.set(1, 4);
-        
-        // Texture Filtering for smoother look
-        this.roadTexture.minFilter = THREE.LinearMipmapLinearFilter;
-        this.roadTexture.magFilter = THREE.LinearFilter;
-        this.roadTexture.anisotropy = 16; 
-
-        this.roadMat = new THREE.MeshStandardMaterial({ 
-            map: this.roadTexture,
-            roughness: 0.4, 
-            metalness: 0.1, 
-            color: 0x666666
-        });
-
-        const postTexture = loader.load('./post_texture.png');
-        this.postGeo = new THREE.CylinderGeometry(0.8, 0.8, 6, 16);
-        this.postMat = new THREE.MeshStandardMaterial({ 
-            map: postTexture,
-            color: 0xffffff, 
-            emissive: 0xff4400,
-            emissiveIntensity: 1.5,
-            metalness: 0.8,
-            roughness: 0.2
-        });
+        // Refactoring: Use Factory and Generator
+        this.factory = new TrackFactory();
+        this.generator = new TrackGenerator(this);
 
         // Initial generation state
         this.currentPos = new THREE.Vector3(0, 0, 0);
@@ -55,7 +31,6 @@ export class TrackManager {
         const { type, length = 50, turnDir = 1, angle = Math.PI / 2, slope = 0 } = params;
 
         // Calculate dimensions based on slope
-        // length is the surface length.
         const horizLength = length * Math.cos(slope);
         const vertHeight = length * Math.sin(slope);
 
@@ -71,18 +46,8 @@ export class TrackManager {
             slope: slope // Pitch
         };
 
-        // Visuals
-        const geo = new THREE.PlaneGeometry(this.width, length);
-
-        // Fix texture tiling based on length to prevent stretching
-        const uvs = geo.attributes.uv;
-        const tileFactor = length / 20; // 20 units per tile repeat
-        for (let i = 0; i < uvs.count; i++) {
-            uvs.setY(i, uvs.getY(i) * tileFactor);
-        }
-        geo.attributes.uv.needsUpdate = true;
-
-        const mesh = new THREE.Mesh(geo, this.roadMat);
+        // Visuals delegated to factory
+        const mesh = this.factory.createRoadMesh(this.width, length);
         
         // Orient the mesh
         // 1. Position at midpoint
@@ -111,55 +76,11 @@ export class TrackManager {
 
         // Turns and Corners
         if (type === 'turn') {
-            // Corner is flat for simplicity? Or sloped?
-            // Sloped corners are complex to mesh join. 
-            // Strategy: Force corners to be FLAT or continue previous slope?
-            // Let's make corners flatten out to avoid "twisting" geometry issues for now,
-            // OR continue the slope. Continuing slope on a turn creates a spiral.
-            // Let's try to keep corners relatively flat (slope 0) to separate hill segments from turn segments.
-            // This simplifies the math significantly.
-            // But if we want overpasses, we might need to turn while climbing.
-            // Let's allow slope on turns.
+            // Corner implementation: delegated mesh creation
+            const cornerMesh = this.factory.createCornerMesh(this.width);
             
-            // Corner Patch
-            // To make a seamless corner with slope, we treat it as a pie slice or just a small square.
-            // A square corner with slope is tricky because the outer edge travels further than inner.
-            // For now, let's treat the 'corner' connector as a flat landing if possible, or same slope.
-            // Current code adds a square "corner" mesh.
-            
-            // If we have slope, the corner mesh needs to tilt. 
-            // But the next segment will rotate 90 degrees.
-            // If we tilt the corner, the "side" becomes the "start" of the next road.
-            // If we pitch up into a turn, the cross-slope of the next road is weird.
-            // SIMPLIFICATION: We only slope on STRAIGHTS. Turns are flat.
-            // This means we might need a small transition or just snap.
-            // Actually, let's just use the `slope` param. If we passed slope=0 for turns, fine.
-            // But we need to handle the vertical gap if the previous straight was sloped?
-            // No, `currentPos` tracks the end of the previous segment.
-            
-            // Corner implementation:
-            const cornerGeo = new THREE.PlaneGeometry(this.width, this.width);
-            const cornerMesh = new THREE.Mesh(cornerGeo, this.roadMat);
-            
-            // Position: CurrentPos is at the end of the straight.
-            // The straight ended. We are at the start of the turn.
-            // The "corner" fills the intersection.
-            // Center of corner square:
             const cornerCenterOffset = this.currentDir.clone().multiplyScalar(this.width / 2);
-            // Move vertically based on slope?
-            // If the turn is flat, the corner is flat.
-            // We should align the corner with the *end* of the incoming road.
-            // So pitch it to match incoming slope?
-            // If we do that, and the outgoing road is flat, we have a kink.
-            // Let's just make the corner mesh match the incoming slope (Pitch) 
-            // and the outgoing road start from the corner's end.
-            
             const cornerCenter = this.currentPos.clone().add(cornerCenterOffset);
-            // Height adjustment for slope across the corner width?
-            // If slope is 0 (flat turn), easy.
-            // If slope != 0, we calculate rise over the half-width?
-            // Let's effectively pause slope during the corner block to keep it sane.
-            // So Corner is FLAT (Slope 0).
             
             cornerMesh.rotation.order = 'YXZ';
             cornerMesh.rotation.y = Math.atan2(this.currentDir.x, this.currentDir.z) + Math.PI;
@@ -206,13 +127,10 @@ export class TrackManager {
         postPos.add(cornerVector.multiplyScalar(12));
         
         // Adjust post height to match road
-        // The post is 6 units tall (centered). 
-        // We want the top to be reachable.
-        // If road is at Y=100, post should be at Y=100 + offset.
-        // Mesh Y is center.
         postPos.y += 2; 
 
-        const post = new THREE.Mesh(this.postGeo, this.postMat);
+        // delegated post mesh creation
+        const post = this.factory.createPostMesh();
         post.position.copy(postPos);
         this.scene.add(post);
 
@@ -252,73 +170,7 @@ export class TrackManager {
     }
 
     generateNextSegment() {
-        // Helper to check a candidate segment for collision
-        const checkCandidate = (candidate) => {
-            const tempHorizLen = candidate.length * Math.cos(candidate.slope);
-            const centerOffset = this.currentDir.clone().multiplyScalar(tempHorizLen / 2);
-            const projectedCenter = this.currentPos.clone().add(centerOffset);
-            
-            return !this.checkCollision({
-                center: projectedCenter,
-                width: this.width,
-                length: tempHorizLen,
-                angle: 0
-            }, this.currentPos.y);
-        };
-
-        const rand = Math.random();
-        let primary = {};
-
-        // 1. Generate Primary Wish
-        if (rand > 0.6) { // Turn
-            primary = {
-                type: 'turn',
-                turnDir: Math.random() > 0.5 ? 1 : -1,
-                length: 50 + Math.random() * 30,
-                slope: 0
-            };
-        } else { // Straight
-            const slopeRand = Math.random();
-            let s = 0;
-            if (slopeRand < 0.3) s = 0.2;
-            else if (slopeRand < 0.6) s = -0.2;
-            
-            primary = {
-                type: 'straight',
-                length: 80 + Math.random() * 60,
-                turnDir: 0,
-                slope: s
-            };
-        }
-
-        // 2. List Candidates (Primary + Evasive maneuvers)
-        const candidates = [
-            primary,
-            // Try simple straight if primary was turn (or just as backup)
-            { type: 'straight', length: 60, slope: 0 },
-            // Try opposite turn if primary was turn
-            (primary.type === 'turn') ? { ...primary, turnDir: -primary.turnDir } : null,
-            // Try Turn Left with short approach
-            { type: 'turn', length: 30, turnDir: 1, slope: 0 },
-            // Try Turn Right with short approach
-            { type: 'turn', length: 30, turnDir: -1, slope: 0 }
-        ];
-
-        let selectedParams = null;
-        for(let c of candidates) {
-            if (c && checkCandidate(c)) {
-                selectedParams = c;
-                break;
-            }
-        }
-
-        // 3. Last Resort
-        if (!selectedParams) {
-             // If boxed in, force a very steep climb to try and clear it, 
-             // essentially an emergency ramp.
-             selectedParams = { type: 'straight', length: 60, slope: 0.4 };
-        }
-
+        const selectedParams = this.generator.generate();
         this.addSegment(selectedParams);
     }
 

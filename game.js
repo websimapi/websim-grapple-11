@@ -140,6 +140,10 @@ export class Game {
         while(this.scene.children.length > 0){ 
             this.scene.remove(this.scene.children[0]); 
         }
+
+        // Reset fog density
+        if (this.scene.fog) this.scene.fog.density = 0.002;
+
         this.explosions = [];
 
         // Cleanup previous replay video
@@ -248,6 +252,11 @@ export class Game {
         const shouldZoomOut = this.explosionTriggered && timeSinceExplosion > 0.5;
 
         if (shouldZoomOut) {
+            // Fade out fog for better visibility during zoom out
+            if (this.scene.fog.density > 0.00001) {
+                this.scene.fog.density = THREE.MathUtils.lerp(this.scene.fog.density, 0.0, dt * 2.0);
+            }
+
             // Calculate zoom target once
             if (!this.zoomTarget) {
                 const bounds = this.trackManager.getTrackBounds();

@@ -85,6 +85,7 @@ export class Game {
 
         // Explosion / crash state
         this.explosionTriggered = false;
+        this.explosionTime = 0;
         this.interceptorSpawned = false;
     }
 
@@ -180,6 +181,7 @@ export class Game {
         this.isRunning = true;
         this.isCrashing = false;
         this.explosionTriggered = false;
+        this.explosionTime = 0;
         this.interceptorSpawned = false;
         this.gameOverScreen.classList.add('hidden');
         this.distanceTraveled = 0;
@@ -234,30 +236,45 @@ export class Game {
             }
         }
 
-        // Camera follow
+        // Camera follow logic
         let targetCamPos;
-        let lerpSpeed;
+        let posLerpFactor;
+        let lookLerpFactor;
 
-        if (this.explosionTriggered) {
+        // Wait 2 seconds before zooming out
+        const timeSinceExplosion = this.explosionTriggered ? (this.clock.getElapsedTime() - this.explosionTime) : 0;
+        const shouldZoomOut = this.explosionTriggered && timeSinceExplosion > 2.0;
+
+        if (shouldZoomOut) {
             // Zoom out to show the entire generated map
             // Position high above and behind the crash site
             targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 500, -300));
-            lerpSpeed = dt * 0.5; // Slow cinematic zoom
+            posLerpFactor = dt * 0.6; // Very smooth, slow cinematic pull back
+            lookLerpFactor = dt * 1.0; 
         } else {
-            // Falling follow
+            // Falling follow (or holding position while explosion plays)
             // Pull back further to show the fall and surroundings (asteroids)
             targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 60, 40));
-            lerpSpeed = dt * 3;
+            
+            if (this.explosionTriggered) {
+                // During explosion wait: stabilize camera slowly to observe effect
+                posLerpFactor = dt * 2.0;
+            } else {
+                // Falling: move fast
+                posLerpFactor = dt * 3.0;
+            }
+            lookLerpFactor = dt * 5.0;
         }
 
-        this.camera.position.lerp(targetCamPos, lerpSpeed);
+        this.camera.position.lerp(targetCamPos, posLerpFactor);
         
-        this.cameraLookAt.lerp(this.car.position, dt * 5);
+        this.cameraLookAt.lerp(this.car.position, lookLerpFactor);
         this.camera.lookAt(this.cameraLookAt);
     }
 
     triggerExplosion() {
         this.explosionTriggered = true;
+        this.explosionTime = this.clock.getElapsedTime();
 
         // Spawn Explosion at current car position
         const explosion = new Explosion(this.scene, this.car.position.clone());

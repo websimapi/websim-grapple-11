@@ -235,11 +235,21 @@ export class Game {
         }
 
         // Camera follow
-        // Pull back further to show the fall and surroundings (asteroids)
-        const targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 60, 40));
-        
-        // Slower camera follow during explosion for cinematic effect
-        const lerpSpeed = this.explosionTriggered ? dt * 2 : dt * 3;
+        let targetCamPos;
+        let lerpSpeed;
+
+        if (this.explosionTriggered) {
+            // Zoom out to show the entire generated map
+            // Position high above and behind the crash site
+            targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 500, -300));
+            lerpSpeed = dt * 0.5; // Slow cinematic zoom
+        } else {
+            // Falling follow
+            // Pull back further to show the fall and surroundings (asteroids)
+            targetCamPos = this.car.position.clone().add(new THREE.Vector3(0, 60, 40));
+            lerpSpeed = dt * 3;
+        }
+
         this.camera.position.lerp(targetCamPos, lerpSpeed);
         
         this.cameraLookAt.lerp(this.car.position, dt * 5);
@@ -266,7 +276,7 @@ export class Game {
         // Delay showing game over overlay so explosion is visible
         setTimeout(() => {
             this.showGameOverScreen();
-            this.isCrashing = false;
+            // Keep isCrashing true so camera animation (zoom out) continues behind the UI
         }, 2500);
     }
 
